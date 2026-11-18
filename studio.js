@@ -57,7 +57,7 @@ document.querySelectorAll('aside input:not([type=file]), aside select').forEach(
       else patches.set(key,{...patches.get(key),[id]:readScreen(id)});
     }
     if(id==='cols'||id==='rows') targets();
-    if(id==='width'||id==='height') sourceDirty=true;
+    if(['width','height','cols','rows'].includes(id)) sourceDirty=true;
     refresh();
   });
 });
@@ -127,14 +127,19 @@ el('videoPlay').onclick=async()=>{
   else asset.pause();
   el('videoPlay').textContent=tr(asset.paused?'播放影片':'暫停影片');
 };
+const isSingleSlice=()=>val('cols')===1&&val('rows')===1;
+let sourceBounds;
 function readSource(w,h){
   const scale=Math.min(1,1536/Math.max(w,h));
   sample.width=Math.round(w*scale);sample.height=Math.round(h*scale);
   const aw=asset.videoWidth||asset.naturalWidth||asset.width;
   const ah=asset.videoHeight||asset.naturalHeight||asset.height;
-  const cover=Math.max(sample.width/aw,sample.height/ah);
+  const fitScale=(isSingleSlice()?Math.min:Math.max)(sample.width/aw,sample.height/ah);
+  const dw=aw*fitScale,dh=ah*fitScale;
+  const left=(sample.width-dw)/2,top=(sample.height-dh)/2;
+  sourceBounds=[left/sample.width,top/sample.height,(left+dw)/sample.width,(top+dh)/sample.height];
   ctx.fillStyle='white';ctx.fillRect(0,0,sample.width,sample.height);
-  ctx.drawImage(asset,(sample.width-aw*cover)/2,(sample.height-ah*cover)/2,aw*cover,ah*cover);
+  ctx.drawImage(asset,left,top,dw,dh);
   raster=ctx.getImageData(0,0,sample.width,sample.height).data;
   sourceDirty=false;
 }
@@ -168,7 +173,8 @@ function compose(w,h,time,quality){
   const offX=val('x')/100,offY=val('y')/100,stretch=val('stretch')/100;
   const taperX=val('taperX')/100,taperY=val('taperY')/100,twist=val('twist')*Math.PI/180;
   const drift=val('drift')/100, fit=el('fit').checked, invert=el('invert').checked;
-  const gap=val('gap'), shape=el('shape').value;
+  const single=isSingleSlice();
+  const gap=single?0:val('gap'), shape=single?'rect':el('shape').value;
   for(let c=0;c<columns;c++){
     const [left,cw]=xParts[c];
     const yParts=partitions(rows,h,variation,149+c*31);
@@ -188,9 +194,11 @@ function compose(w,h,time,quality){
         const dx=(px-cx)*(fit?w/columns/cw:1),dy=(py-cy)*(fit?h/rows/ch:1);
         const xx=(dx*cos-dy*sin)/Math.max(.2,mag*(1+stretch*center)*(1+taperX*dy/ch));
         const yy=(dx*sin+dy*cos)/Math.max(.2,mag*(1+stretch*center)*(1+taperY*dx/cw));
-        const u=.5+((cx+xx+shiftX+motionX)/w-.5)/zoom;
-        const v=.5+((cy+yy+shiftY+motionY)/h-.5)/zoom;
+        const u=single?px/w:.5+((cx+xx+shiftX+motionX)/w-.5)/zoom;
+        const v=single?py/h:.5+((cy+yy+shiftY+motionY)/h-.5)/zoom;
         if(u<0||u>=1||v<0||v>=1) return 0;
+        const [leftBound,topBound,rightBound,bottomBound]=sourceBounds;
+        if(single&&(u<leftBound||u>=rightBound||v<topBound||v>=bottomBound)) return 0;
         const index=(Math.floor(v*sample.height)*sample.width+Math.floor(u*sample.width))*4;
         const gray=(raster[index]*.2126+raster[index+1]*.7152+raster[index+2]*.0722)/255;
         const light=(gray-.5)*s.contrast/100+.5+s.light/100;
