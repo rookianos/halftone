@@ -1,4 +1,4 @@
-# CHRNC HALFTONE WORKS
+# CHRONIC: HALFTONE WORKS
 
 靜態網版圖像工具，支援繁體中文、简体中文、圖片與影片匯入，以及 PNG／SVG 匯出。素材在瀏覽器內處理。
 
