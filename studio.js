@@ -2,6 +2,7 @@
 'use strict';
 const el = id => document.getElementById(id);
 const preview = el('preview');
+const vectorPreview = el('vectorPreview');
 const sample = document.createElement('canvas');
 const plate = document.createElement('canvas');
 const ctx = sample.getContext('2d', {willReadFrequently:true});
@@ -193,26 +194,53 @@ function compose(w,h,time,quality){
         return clamp(invert?light:1-light,0,1);
       }
       function marks(a,kind){
-        const ca=Math.cos(a),sa=Math.sin(a),step=kind==='dots'?pitch:pitch*.5;
+        const ca=Math.cos(a),sa=Math.sin(a),step=kind==='dots'?pitch:pitch*.28;
         const corners=[[-sw/2,-sh/2],[sw/2,-sh/2],[-sw/2,sh/2],[sw/2,sh/2]];
         const uMax=Math.max(...corners.map(([dx,dy])=>Math.abs(dx*ca+dy*sa)))+pitch;
         const vMax=Math.max(...corners.map(([dx,dy])=>Math.abs(-dx*sa+dy*ca)))+pitch;
         const paths=[];
         for(let v=-Math.ceil(vMax/pitch)*pitch;v<=vMax;v+=pitch){
+          let upper=[],lower=[];
+          function finishLine(){
+            if(upper.length>1){
+              const points=upper.concat(lower.reverse());
+              let outline='M'+point(points[0]);
+              for(let j=1;j<points.length-1;j++){
+                const [x0,y0]=points[j], [x1,y1]=points[j+1];
+                outline+='Q'+point(points[j])+' '+point([(x0+x1)/2,(y0+y1)/2]);
+              }
+              paths.push(outline+'L'+point(points.at(-1))+'Z');
+            }
+            upper=[];lower=[];
+          }
+          const point=pair=>pair.map(round).join(' ');
           for(let u=-Math.ceil(uMax/step)*step;u<=uMax;u+=step){
             const px=x+sw/2+u*ca-v*sa,py=y+sh/2+u*sa+v*ca;
-            if(px<x-pitch||px>x+sw+pitch||py<y-pitch||py>y+sh+pitch) continue;
+            if(px<x-pitch||px>x+sw+pitch||py<y-pitch||py>y+sh+pitch){
+              if(upper.length) finishLine();
+              continue;
+            }
             const dark=shade(px,py);
-            if(dark<.012) continue;
             if(kind==='dots'){
+              if(dark<.012) continue;
               const rr=round(pitch*Math.sqrt(dark/Math.PI)*(1+.27*dark**4));
               if(rr>0) paths.push('M'+round(px-rr)+' '+round(py)+'a'+rr+' '+rr+' 0 1 0 '+round(rr*2)+' 0a'+rr+' '+rr+' 0 1 0 '+round(-rr*2)+' 0Z');
+            }else if(dark<.012){
+              if(upper.length){
+                upper.push([px,py]);lower.push([px,py]);
+                finishLine();
+              }
             }else{
-              const half=step*.502,thick=dark*pitch*(mode==='cross'?.34:.505);
-              const xx=half*ca,xy=half*sa,yx=-thick*sa,yy=thick*ca;
-              paths.push('M'+[[px-xx-yx,py-xy-yy],[px+xx-yx,py+xy-yy],[px+xx+yx,py+xy+yy],[px-xx+yx,py-xy+yy]].map(p=>p.map(round).join(' ')).join('L')+'Z');
+              if(!upper.length){
+                const tip=[px-step*ca*.5,py-step*sa*.5];
+                upper.push(tip);lower.push(tip);
+              }
+              const thick=dark*pitch*(mode==='cross'?.34:.505);
+              upper.push([px-thick*sa,py+thick*ca]);
+              lower.push([px+thick*sa,py-thick*ca]);
             }
           }
+          if(upper.length) finishLine();
         }
         return paths.join('');
       }
@@ -235,6 +263,16 @@ function paint(canvas,w,h,frame){
     g.restore();
   }
 }
+function svgContent(frame,individual=false){
+  const prefix=individual?'slice-':'preview-slice-';
+  const paper=el('transparent').checked?'':'<rect width="100%" height="100%" fill="'+el('paper').value+'"/>';
+  const defs=frame.map((tile,i)=>'<clipPath id="'+prefix+i+'"><path d="'+tile.clip+'"/></clipPath>').join('');
+  const art=frame.map((tile,i)=>{
+    const paths=individual?tile.paths.flatMap(path=>path.match(/M[^M]+/g)??[]):tile.paths;
+    return '<g clip-path="url(#'+prefix+i+')" fill="'+el('ink').value+'">'+paths.filter(Boolean).map(path=>'<path d="'+path+'"/>').join('')+'</g>';
+  }).join('');
+  return '<defs>'+defs+'</defs>'+paper+art;
+}
 function download(blob,name){
   const url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
@@ -249,9 +287,17 @@ function render(now){
   if(sourceDirty||videoPlaying) readSource(w,h);
   if(videoPlaying) el('seek').value=asset.currentTime;
   if(drifting) phase+=Math.min(.16,(now-lastFrame)/1000);
-  preview.width=Math.round(w*scale);preview.height=Math.round(h*scale);
-  if(original) preview.getContext('2d').drawImage(sample,0,0,preview.width,preview.height);
-  else paint(preview,w,h,compose(w,h,phase,drifting||videoPlaying?Math.max(w,h)/150:0));
+  el('stage').style.setProperty('--ratio',w/h);
+  preview.hidden=!original;
+  vectorPreview.toggleAttribute('hidden',original);
+  if(original){
+    preview.width=Math.round(w*scale);
+    preview.height=Math.round(h*scale);
+    preview.getContext('2d').drawImage(sample,0,0,preview.width,preview.height);
+  }else{
+    vectorPreview.setAttribute('viewBox','0 0 '+w+' '+h);
+    vectorPreview.innerHTML=svgContent(compose(w,h,phase,drifting||videoPlaying?Math.max(w,h)/150:0));
+  }
   lastFrame=now;dirty=false;
   updateStatus();
 }
@@ -263,10 +309,7 @@ async function save(format){
     const [w,h]=size();readSource(w,h);
     const frame=compose(w,h,phase,0);
     if(format==='svg'){
-      const paper=el('transparent').checked?'':'<rect width="100%" height="100%" fill="'+el('paper').value+'"/>';
-      const defs=frame.map((tile,i)=>'<clipPath id="slice-'+i+'"><path d="'+tile.clip+'"/></clipPath>').join('');
-      const art=frame.map((tile,i)=>'<g clip-path="url(#slice-'+i+')" fill="'+el('ink').value+'">'+tile.paths.flatMap(path=>path.match(/M[^M]+/g)??[]).map(path=>'<path d="'+path+'"/>').join('')+'</g>').join('');
-      const svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'"><defs>'+defs+'</defs>'+paper+art+'</svg>';
+      const svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'">'+svgContent(frame,true)+'</svg>';
       download(new Blob([svg],{type:'image/svg+xml'}),'vktn-screen.svg');
     }else{
       const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;paint(canvas,w,h,frame);
