@@ -49,6 +49,7 @@ document.querySelectorAll('aside input:not([type=file]), aside select').forEach(
     const id=control.id;
     if(id==='seek'){ if(asset instanceof HTMLVideoElement) asset.currentTime=val(id); return; }
     if(id==='target') return;
+    if(id==='variation') el('layout').value='random';
     if(el(id+'Out')) el(id+'Out').textContent=control.value;
     if(screenIds.includes(id)){
       const key=el('target').value;
@@ -60,7 +61,7 @@ document.querySelectorAll('aside input:not([type=file]), aside select').forEach(
     refresh();
   });
 });
-el('shuffle').onclick=()=>{seed=(seed+Math.floor(Math.random()*99999)+1)>>>0;refresh();};
+el('shuffle').onclick=()=>{el('layout').value='random';seed=(seed+Math.floor(Math.random()*99999)+1)>>>0;refresh();};
 el('original').onclick=()=>{original=!original;el('original').setAttribute('aria-pressed',original);el('original').textContent=tr(original?'看效果':'看原圖');refresh();};
 el('play').onclick=()=>{drifting=!drifting;el('play').setAttribute('aria-pressed',drifting);el('play').textContent=tr(drifting?'暫停漂移':'播放漂移');refresh();};
 function useAsset(next,label,url){
@@ -143,7 +144,9 @@ function random(i){
   return ((n^(n>>>16))>>>0)/4294967296;
 }
 function partitions(count,extent,variation,key){
-  const weights=Array.from({length:count},(_,i)=>1+(random(key+i)*2-1)*variation);
+  const offsets=Array.from({length:count},(_,i)=>random(key+i));
+  const min=Math.min(...offsets),max=Math.max(...offsets);
+  const weights=offsets.map(offset=>max===min?1:1+(2*(offset-min)/(max-min)-1)*variation);
   const total=weights.reduce((a,b)=>a+b,0);
   let offset=0;
   return weights.map(weight=>{
